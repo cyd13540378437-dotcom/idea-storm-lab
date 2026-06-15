@@ -1,0 +1,14 @@
+[Unit]
+Description=Idea Storm Lab
+After=network.target
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/idea-storm-lab
+ExecStart=/usr/bin/python3 /opt/idea-storm-lab/app.py
+Restart=always
+RestartSec=3
+Environment=PYTHONUNBUFFERED=1
+
+[Install]
+WantedBy=multi-user.target

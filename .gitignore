@@ -1,0 +1,11 @@
+.env
+data/*.db
+data/*.db-*
+data/server.*
+data/server-*.*
+uploads/*
+!uploads/.gitkeep
+__pycache__/
+.pycache/
+*.pyc
+preview-login.png

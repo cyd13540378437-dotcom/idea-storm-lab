@@ -1,0 +1,298 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Idea Storm Lab</title>
+    <link rel="stylesheet" href="/static/styles.css" />
+  </head>
+  <body>
+    <main id="app" class="app-shell">
+      <section id="authView" class="auth-view" hidden>
+        <div class="auth-board">
+          <div class="brand-block">
+            <span class="brand-mark">IS</span>
+            <h1>Idea Storm Lab</h1>
+            <p>邀请制创业脑暴空间</p>
+          </div>
+
+          <div class="auth-panel" aria-label="登录或注册">
+            <div class="segmented" role="tablist">
+              <button id="loginTab" class="segment active" type="button">登录</button>
+              <button id="registerTab" class="segment" type="button">注册</button>
+            </div>
+
+            <form id="loginForm" class="auth-form">
+              <label>
+                名称
+                <input name="name" autocomplete="username" required />
+              </label>
+              <label>
+                登录口令
+                <input name="passcode" type="password" autocomplete="current-password" required />
+              </label>
+              <button class="primary-button full" type="submit">进入空间</button>
+            </form>
+
+            <form id="registerForm" class="auth-form" hidden>
+              <label>
+                名称
+                <input name="name" autocomplete="username" required minlength="2" />
+              </label>
+              <label>
+                登录口令
+                <input name="passcode" type="password" autocomplete="new-password" required minlength="4" />
+              </label>
+              <label>
+                邀请码
+                <input name="inviteCode" autocomplete="one-time-code" required />
+              </label>
+              <button class="primary-button full" type="submit">创建身份</button>
+            </form>
+
+            <p id="authMessage" class="form-message" role="status"></p>
+          </div>
+        </div>
+      </section>
+
+      <section id="workspaceView" class="workspace" hidden>
+        <header class="topbar">
+          <div class="topbar-title">
+            <span class="brand-mark small">IS</span>
+            <div>
+              <h1>Idea Storm Lab</h1>
+              <p id="memberLine">脑暴空间</p>
+            </div>
+          </div>
+          <nav class="main-nav" aria-label="主流程">
+            <button id="navWrite" class="nav-pill active" type="button" data-page="write">写想法</button>
+            <button id="navAnalysis" class="nav-pill" type="button" data-page="analysis">分析结果</button>
+            <button id="navWall" class="nav-pill" type="button" data-page="wall">灵感墙</button>
+          </nav>
+          <div class="topbar-actions">
+            <button id="inviteButton" class="icon-button text-button" type="button" title="生成邀请码">
+              <span>＋</span><span>邀请</span>
+            </button>
+            <button id="refreshButton" class="icon-button" type="button" title="刷新">
+              <span>↻</span>
+            </button>
+            <button id="logoutButton" class="ghost-button" type="button">退出</button>
+          </div>
+        </header>
+
+        <div id="notice" class="notice" hidden></div>
+
+        <section class="flow-shell">
+          <section id="writePage" class="page-view write-page">
+            <aside class="composer-panel">
+              <div class="panel-heading">
+                <p class="eyebrow">Step 1</p>
+                <h2>写下一个想法</h2>
+              </div>
+              <form id="ideaForm" class="idea-form">
+                <label>
+                  标题
+                  <input name="title" maxlength="90" placeholder="例如：AI 创业想法整理工具" required />
+                </label>
+                <label>
+                  内容
+                  <textarea name="body" rows="10" placeholder="写痛点、场景、用户、你脑子里还没成型的部分也可以。" required></textarea>
+                </label>
+                <label class="file-drop">
+                  <input id="newFiles" name="files" type="file" multiple />
+                  <span>＋</span>
+                  <strong>添加图片或文档</strong>
+                  <small id="newFileCount">可多选</small>
+                </label>
+                <button id="submitIdeaButton" class="primary-button full" type="submit">提交并进入分析</button>
+              </form>
+            </aside>
+
+            <section class="next-step-panel">
+              <p class="eyebrow">Step 2</p>
+              <h2>分析结果会在下一步展开</h2>
+              <p>提交后会自动切到“分析结果”。这里会展示内容提取、竞品线索、用户群体、业务流程、运营模式、资本故事、产品能力、技术选型和商业画布。</p>
+              <div id="selectedMini" class="selected-mini"></div>
+              <button id="goAnalysisButton" class="primary-button" type="button">查看当前分析</button>
+            </section>
+          </section>
+
+          <section id="analysisPage" class="page-view analysis-page" hidden>
+            <aside class="idea-picker-panel">
+              <div class="panel-heading">
+                <p class="eyebrow">Ideas</p>
+                <h2>选择想法</h2>
+              </div>
+              <div id="analysisIdeaList" class="analysis-idea-list"></div>
+            </aside>
+
+            <section class="detail-panel focus-detail">
+              <div id="emptyDetail" class="empty-detail">
+                <span class="empty-symbol">✦</span>
+                <h2>还没有可分析的想法</h2>
+                <p>先去“写想法”提交一条，分析会自动出现在这里。</p>
+              </div>
+
+              <article id="ideaDetail" class="idea-detail" hidden>
+                <div class="detail-top">
+                  <div>
+                    <p id="detailAuthor" class="eyebrow"></p>
+                    <h2 id="detailTitle"></h2>
+                  </div>
+                  <button id="reanalyzeButton" class="icon-button text-button" type="button" title="重新分析">
+                    <span>↻</span><span>分析</span>
+                  </button>
+                </div>
+
+                <nav class="tabs" aria-label="分析视图">
+                  <button id="textTab" class="tab active" type="button">文字分析</button>
+                  <button id="canvasTab" class="tab" type="button">商业画布</button>
+                </nav>
+
+                <section id="analysisView" class="analysis-view"></section>
+                <section id="canvasView" class="canvas-view" hidden></section>
+
+                <section class="source-panel">
+                  <div class="source-heading">
+                    <div>
+                      <p class="eyebrow">Source</p>
+                      <h3>原始想法</h3>
+                    </div>
+                  </div>
+
+                  <form id="editForm" class="edit-form" hidden>
+                    <label>
+                      标题
+                      <input name="title" required maxlength="90" />
+                    </label>
+                    <label>
+                      内容
+                      <textarea name="body" rows="6" required></textarea>
+                    </label>
+                    <button class="primary-button" type="submit">保存并更新分析</button>
+                  </form>
+
+                  <div id="readOnlyBody" class="idea-body"></div>
+
+                  <div class="attachment-row">
+                    <h3>附件</h3>
+                    <label id="detailUploadLabel" class="mini-upload" hidden>
+                      <input id="detailFiles" type="file" multiple />
+                      <span>＋</span>
+                      <strong>上传</strong>
+                    </label>
+                  </div>
+                  <div id="attachmentList" class="attachment-list"></div>
+                </section>
+              </article>
+            </section>
+          </section>
+
+          <section id="wallPage" class="page-view wall-page" hidden>
+            <section class="board-panel">
+              <div class="board-header">
+                <div>
+                  <p class="eyebrow">Shared wall</p>
+                  <h2>灵感墙</h2>
+                </div>
+                <div id="ideaCount" class="counter">0</div>
+              </div>
+              <div id="ideaBoard" class="idea-board" aria-live="polite"></div>
+            </section>
+          </section>
+        </section>
+
+        <template id="legacyLayout">
+          <aside class="composer-panel">
+            <div class="panel-heading">
+              <p class="eyebrow">New spark</p>
+              <h2>写下一个想法</h2>
+            </div>
+            <form id="ideaForm" class="idea-form">
+              <label>
+                标题
+                <input name="title" maxlength="90" placeholder="例如：AI 创业想法整理工具" required />
+              </label>
+              <label>
+                内容
+                <textarea name="body" rows="10" placeholder="写痛点、场景、用户、你脑子里还没成型的部分也可以。" required></textarea>
+              </label>
+              <label class="file-drop">
+                <input id="newFiles" name="files" type="file" multiple />
+                <span>＋</span>
+                <strong>添加图片或文档</strong>
+                <small id="newFileCount">可多选</small>
+              </label>
+              <button id="submitIdeaButton" class="primary-button full" type="submit">提交并分析</button>
+            </form>
+          </aside>
+
+          <section class="board-panel">
+            <div class="board-header">
+              <div>
+                <p class="eyebrow">Shared wall</p>
+                <h2>灵感墙</h2>
+              </div>
+              <div id="ideaCount" class="counter">0</div>
+            </div>
+            <div id="ideaBoard" class="idea-board" aria-live="polite"></div>
+          </section>
+
+          <section class="detail-panel">
+            <div id="emptyDetail" class="empty-detail">
+              <span class="empty-symbol">✦</span>
+              <h2>选中一张想法卡片</h2>
+              <p>原文、附件、分析和商业画布会在这里展开。</p>
+            </div>
+
+            <article id="ideaDetail" class="idea-detail" hidden>
+              <div class="detail-top">
+                <div>
+                  <p id="detailAuthor" class="eyebrow"></p>
+                  <h2 id="detailTitle"></h2>
+                </div>
+                <button id="reanalyzeButton" class="icon-button text-button" type="button" title="重新分析">
+                  <span>↻</span><span>分析</span>
+                </button>
+              </div>
+
+              <form id="editForm" class="edit-form" hidden>
+                <label>
+                  标题
+                  <input name="title" required maxlength="90" />
+                </label>
+                <label>
+                  内容
+                  <textarea name="body" rows="8" required></textarea>
+                </label>
+                <button class="primary-button" type="submit">保存并更新分析</button>
+              </form>
+
+              <div id="readOnlyBody" class="idea-body"></div>
+
+              <div class="attachment-row">
+                <h3>附件</h3>
+                <label id="detailUploadLabel" class="mini-upload" hidden>
+                  <input id="detailFiles" type="file" multiple />
+                  <span>＋</span>
+                  <strong>上传</strong>
+                </label>
+              </div>
+              <div id="attachmentList" class="attachment-list"></div>
+
+              <nav class="tabs" aria-label="分析视图">
+                <button id="textTab" class="tab active" type="button">文字分析</button>
+                <button id="canvasTab" class="tab" type="button">商业画布</button>
+              </nav>
+
+              <section id="analysisView" class="analysis-view"></section>
+              <section id="canvasView" class="canvas-view" hidden></section>
+            </article>
+          </section>
+        </template>
+      </section>
+    </main>
+
+    <script src="/static/app.js"></script>
+  </body>
+</html>
