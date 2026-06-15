@@ -90,9 +90,10 @@ def safe_filename(name):
 
 
 def connect_db():
-    conn = sqlite3.connect(DB_PATH)
+    conn = sqlite3.connect(DB_PATH, timeout=30)
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA foreign_keys = ON")
+    conn.execute("PRAGMA busy_timeout = 30000")
     return conn
 
 
@@ -104,6 +105,8 @@ def init_db():
     DATA_DIR.mkdir(exist_ok=True)
     UPLOAD_DIR.mkdir(exist_ok=True)
     with connect_db() as conn:
+        conn.execute("PRAGMA journal_mode = WAL")
+        conn.execute("PRAGMA synchronous = NORMAL")
         conn.executescript(
             """
             CREATE TABLE IF NOT EXISTS users (
@@ -729,6 +732,7 @@ class BrainstormHandler(SimpleHTTPRequestHandler):
                     (user["id"], title, body, now, now),
                 )
                 idea_id = cursor.lastrowid
+                conn.commit()
                 analyze_and_store(conn, idea_id, "created")
                 idea = conn.execute("SELECT * FROM ideas WHERE id = ?", (idea_id,)).fetchone()
                 return self.send_json({"idea": public_idea(conn, idea, user["id"], True)}, HTTPStatus.CREATED)
@@ -772,6 +776,7 @@ class BrainstormHandler(SimpleHTTPRequestHandler):
                     """,
                     (title, body, now_iso(), idea["id"]),
                 )
+                conn.commit()
                 analyze_and_store(conn, idea["id"], "edited")
                 updated = conn.execute("SELECT * FROM ideas WHERE id = ?", (idea["id"],)).fetchone()
                 return self.send_json({"idea": public_idea(conn, updated, user["id"], True)})
@@ -802,6 +807,7 @@ class BrainstormHandler(SimpleHTTPRequestHandler):
                     "UPDATE ideas SET content_version = content_version + 1, updated_at = ? WHERE id = ?",
                     (now_iso(), idea["id"]),
                 )
+                conn.commit()
                 analyze_and_store(conn, idea["id"], "attachment_removed")
                 updated = conn.execute("SELECT * FROM ideas WHERE id = ?", (idea["id"],)).fetchone()
                 return self.send_json({"idea": public_idea(conn, updated, user["id"], True)})
@@ -929,6 +935,7 @@ class BrainstormHandler(SimpleHTTPRequestHandler):
             "UPDATE ideas SET content_version = content_version + 1, updated_at = ? WHERE id = ?",
             (now_iso(), idea["id"]),
         )
+        conn.commit()
         analyze_and_store(conn, idea["id"], "attachment_added")
         updated = conn.execute("SELECT * FROM ideas WHERE id = ?", (idea["id"],)).fetchone()
         return self.send_json({"idea": public_idea(conn, updated, user["id"], True)})
