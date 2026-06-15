@@ -9,3 +9,4 @@ __pycache__/
 .pycache/
 *.pyc
 preview-login.png
+.DS_Store
