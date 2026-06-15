@@ -10,3 +10,4 @@ __pycache__/
 *.pyc
 preview-login.png
 .DS_Store
+PROJECT_CONTEXT.md
