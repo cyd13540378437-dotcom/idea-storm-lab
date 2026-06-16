@@ -9,7 +9,7 @@ const state = {
   activeTab: "text",
 };
 
-const cardColors = ["#FFE66D", "#B9FBC0", "#A0C4FF", "#FFADAD", "#CDB4DB", "#CAFFBF"];
+const cardColors = ["#fff4ba", "#fffaf0", "#e7edf1", "#dfe9e4", "#f7e5da"];
 
 const canvasLabels = {
   customer_segments: "客户细分",
@@ -410,6 +410,7 @@ function renderCompetitors(items) {
 }
 
 function renderCanvas(canvas = {}) {
+  canvas = canvas || {};
   const order = [
     "key_partners",
     "key_activities",
