@@ -10,6 +10,7 @@ import sqlite3
 import string
 import sys
 import time
+import threading
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -1080,7 +1081,7 @@ class BrainstormHandler(SimpleHTTPRequestHandler):
     def start_sse(self):
         self.send_response(HTTPStatus.OK)
         self.send_header("Content-Type", "text/event-stream; charset=utf-8")
-        self.send_header("Cache-Control", "no-cache")
+        self.send_header("Cache-Control", "no-cache, no-transform")
         self.send_header("Connection", "keep-alive")
         self.send_header("X-Accel-Buffering", "no")
         self.end_headers()
@@ -1367,9 +1368,14 @@ class BrainstormHandler(SimpleHTTPRequestHandler):
 
         material = idea_material(conn, idea)
         self.start_sse()
+        emit_lock = threading.Lock()
+        stream_closed = threading.Event()
 
         def emit(event, payload):
-            self.send_sse(event, payload)
+            if stream_closed.is_set():
+                return
+            with emit_lock:
+                self.send_sse(event, payload)
 
         try:
             started = time.monotonic()
@@ -1379,6 +1385,7 @@ class BrainstormHandler(SimpleHTTPRequestHandler):
             )
 
             model_started = {"seen": False}
+            heartbeat_stop = threading.Event()
 
             def on_model_delta(_delta):
                 if model_started["seen"]:
@@ -1386,7 +1393,25 @@ class BrainstormHandler(SimpleHTTPRequestHandler):
                 model_started["seen"] = True
                 emit("status", {"message": "模型正在组织结构化分析"})
 
-            analysis, fallback_reason = call_openai_analysis_stream(idea, material, on_model_delta)
+            def heartbeat():
+                while not heartbeat_stop.wait(15):
+                    try:
+                        emit("pulse", {"message": "模型仍在分析，正在保持连接"})
+                    except (BrokenPipeError, ConnectionResetError):
+                        stream_closed.set()
+                        heartbeat_stop.set()
+                        return
+                    except Exception:
+                        heartbeat_stop.set()
+                        return
+
+            heartbeat_thread = threading.Thread(target=heartbeat, daemon=True)
+            heartbeat_thread.start()
+            try:
+                analysis, fallback_reason = call_openai_analysis_stream(idea, material, on_model_delta)
+            finally:
+                heartbeat_stop.set()
+                heartbeat_thread.join(timeout=0.2)
             sys.stderr.write(
                 f"[analysis-stream] idea={idea['id']} model_done elapsed={time.monotonic() - started:.2f}s fallback={bool(fallback_reason)}\n"
             )
@@ -1417,7 +1442,8 @@ class BrainstormHandler(SimpleHTTPRequestHandler):
             sys.stderr.write(
                 f"[analysis-stream] idea={idea['id']} done elapsed={time.monotonic() - started:.2f}s source={source}\n"
             )
-        except BrokenPipeError:
+        except (BrokenPipeError, ConnectionResetError):
+            stream_closed.set()
             return
         except Exception as error:
             try:
