@@ -163,6 +163,19 @@ def init_db():
                 content_json TEXT NOT NULL,
                 created_at TEXT NOT NULL
             );
+
+            CREATE TABLE IF NOT EXISTS clarification_answers (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                idea_id INTEGER NOT NULL REFERENCES ideas(id) ON DELETE CASCADE,
+                question_id TEXT NOT NULL,
+                question_label TEXT,
+                question_text TEXT NOT NULL,
+                answer TEXT NOT NULL,
+                is_fallback INTEGER NOT NULL DEFAULT 0,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                UNIQUE (idea_id, question_id)
+            );
             """
         )
         seed_code = os.getenv("INVITE_CODE", "BRAINSTORM-2026").strip()
@@ -205,6 +218,21 @@ def list_attachments(conn, idea_id):
     ]
 
 
+def list_clarification_answers(conn, idea_id):
+    return [
+        row_to_dict(row)
+        for row in conn.execute(
+            """
+            SELECT question_id, question_label, question_text, answer, is_fallback, created_at, updated_at
+            FROM clarification_answers
+            WHERE idea_id = ?
+            ORDER BY id ASC
+            """,
+            (idea_id,),
+        ).fetchall()
+    ]
+
+
 def public_user(row):
     return {
         "id": row["id"],
@@ -217,6 +245,7 @@ def public_user(row):
 def public_idea(conn, row, viewer_id=None, include_detail=False):
     author = conn.execute("SELECT * FROM users WHERE id = ?", (row["author_id"],)).fetchone()
     attachments = list_attachments(conn, row["id"])
+    clarification_answers = list_clarification_answers(conn, row["id"])
     latest = get_latest_analysis(conn, row["id"])
     summary = ""
     if latest:
@@ -231,6 +260,7 @@ def public_idea(conn, row, viewer_id=None, include_detail=False):
         "author": public_user(author),
         "attachments": attachments,
         "attachment_count": len(attachments),
+        "clarification_answers": clarification_answers,
         "analysis": latest,
         "summary": summary,
         "can_edit": viewer_id == row["author_id"],
@@ -245,10 +275,16 @@ def build_empty_analysis():
         "user_segments": [],
         "business_flow": [],
         "operation_model": [],
+        "hook_analysis": {"summary": "", "hooks": []},
         "capital_story": "",
         "product_capabilities": [],
         "tech_stack": [],
         "risks": [],
+        "assumptions": [],
+        "missing_info": [],
+        "clarifying_questions": [],
+        "section_scores": {},
+        "synthesis_changes": [],
         "canvas": {key: [] for key in CANVAS_KEYS},
     }
 
@@ -298,6 +334,9 @@ def read_text_snippet(path, filename, content_type):
 
 def idea_material(conn, idea):
     attachments = list_attachments(conn, idea["id"])
+    answers = list_clarification_answers(conn, idea["id"])
+    latest_analysis = get_latest_analysis(conn, idea["id"])
+    latest_content = latest_analysis.get("content") if latest_analysis else {}
     attachment_lines = []
     snippets = []
     for item in attachments:
@@ -308,6 +347,32 @@ def idea_material(conn, idea):
         snippet = read_text_snippet(path, item["filename"], item.get("content_type"))
         if snippet:
             snippets.append(f"附件《{item['filename']}》可读取文本：\n{snippet}")
+    previous_lines = []
+    if isinstance(latest_content, dict):
+        extract = latest_content.get("content_extract") or {}
+        if extract.get("summary"):
+            previous_lines.append(f"- 内容摘要：{extract.get('summary')}")
+        for key, label in [
+            ("user_segments", "核心用户"),
+            ("operation_model", "运营模式"),
+            ("hook_analysis", "抓手分析"),
+            ("product_capabilities", "产品能力"),
+            ("risks", "风险判断"),
+            ("assumptions", "当前假设"),
+            ("missing_info", "待补充信息"),
+        ]:
+            value = latest_content.get(key)
+            if key == "hook_analysis" and isinstance(value, dict):
+                hooks = value.get("hooks") if isinstance(value.get("hooks"), list) else []
+                text = "；".join([str(item) for item in hooks[:3] if item])
+                if value.get("summary"):
+                    text = f"{value.get('summary')}；{text}" if text else str(value.get("summary"))
+            elif isinstance(value, list):
+                text = "；".join([str(item) for item in value[:3] if item])
+            else:
+                text = str(value or "").strip()
+            if text:
+                previous_lines.append(f"- {label}：{text}")
     return "\n".join(
         [
             f"标题：{idea['title']}",
@@ -315,6 +380,20 @@ def idea_material(conn, idea):
             "附件：",
             "\n".join(attachment_lines) if attachment_lines else "- 无",
             "\n\n".join(snippets),
+            "已确认的澄清回答：",
+            "\n".join(
+                [
+                    f"- {item['question_label'] or item['question_id']}：{item['question_text']}\n  回答：{item['answer']}"
+                    + ("（用户选择了“我还没想好”，这是系统暂定推荐答案）" if item.get("is_fallback") else "")
+                    for item in answers
+                ]
+            )
+            if answers
+            else "- 暂无",
+            "已有分析摘要：",
+            "\n".join(previous_lines) if previous_lines else "- 暂无",
+            "本次分析要求：",
+            "如果存在已确认的澄清回答，请基于这些回答和已有分析摘要继续修订分析；不要简单重复旧分析，要明确吸收新答案带来的判断变化。",
         ]
     )
 
@@ -353,6 +432,14 @@ def build_mock_analysis(idea, material, source="local"):
             "通过模板、分析深度和协作权限形成付费分层",
             "用创业社区、孵化器和独立开发者圈层做种子增长",
         ],
+        "hook_analysis": {
+            "summary": "当前最适合的抓手是把想法包装成一个能立刻降低讨论成本的小场景，而不是先讲完整平台故事。",
+            "hooks": [
+                "用一次真实团队脑暴前后的对比，证明 AI 能把模糊灵感变成可讨论对象",
+                "从“下一步该问什么”切入，让用户感到系统不是写报告，而是在主持讨论",
+                "把“我还没想好”也沉淀为待验证假设，降低早期表达压力",
+            ],
+        },
         "capital_story": f"“{title}”可以被包装成一个帮助创业团队降低早期决策成本的协作基础设施。它把创意输入、AI 分析和团队共识沉淀到同一个空间里，若能证明高频使用和跨团队扩张，就具备从工具切入工作流的增长故事。",
         "product_capabilities": [
             "邀请制身份与权限管理",
@@ -371,6 +458,133 @@ def build_mock_analysis(idea, material, source="local"):
             "附件里的图片和复杂文档需要后续增强内容解析",
             "协作工具若没有明确决策流程，容易变成灵感仓库",
         ],
+        "assumptions": [
+            "目标用户是否有足够高频和高痛感的使用场景仍需验证",
+            "团队是否愿意围绕 AI 生成的分析形成稳定讨论流程仍需验证",
+        ],
+        "missing_info": [
+            "最先愿意使用并付费的人群还不够具体",
+            "用户当前替代方案和放弃替代方案的理由还不清楚",
+            "第一版成功的验证指标还需要定义",
+        ],
+        "clarifying_questions": [
+            {
+                "id": "target_user",
+                "type": "target_user",
+                "label": "目标用户",
+                "priority": 1,
+                "question": "最先会强烈需要这个想法的人是谁？请尽量具体到角色、场景或当前困扰。",
+                "why_it_matters": "用户不清楚时，后续价值主张、渠道和付费判断都会变虚。",
+                "answer_type": "choice",
+                "options": [
+                    {
+                        "id": "small_team_pm",
+                        "label": "早期团队推进者",
+                        "answer": "3-8 人早期创业团队里负责推进产品和讨论收敛的人。",
+                        "reason": "他们最容易感受到想法分散和讨论无靶心的问题。",
+                    },
+                    {
+                        "id": "incubator_mentor",
+                        "label": "孵化器项目组",
+                        "answer": "孵化器或训练营里的项目组，需要把想法快速转成路演和验证材料。",
+                        "reason": "他们有明确评审节奏，愿意使用结构化工具提高准备效率。",
+                    },
+                ],
+                "recommended_answer": "3-8 人早期创业团队里负责推进产品和讨论收敛的人。",
+                "placeholder": "选择“其他答案”后，可以写你自己的目标用户。",
+                "fallback_answer": "我还没想好",
+                "fallback_effect": "系统会先采用推荐目标用户，并在分析中标记为待验证。",
+            },
+            {
+                "id": "current_alternative",
+                "type": "alternative",
+                "label": "现有替代方案",
+                "priority": 2,
+                "question": "在没有这个产品之前，用户现在通常怎么解决这个问题？",
+                "why_it_matters": "替代方案决定了产品真正要替换的行为，而不只是同类竞品。",
+                "answer_type": "choice",
+                "options": [
+                    {
+                        "id": "wechat_docs",
+                        "label": "微信 + 文档",
+                        "answer": "用户现在主要靠微信群聊天、飞书文档和人工整理来沉淀想法。",
+                        "reason": "这是最常见的低成本替代方式，也最容易暴露信息散乱问题。",
+                    },
+                    {
+                        "id": "mentor_chat",
+                        "label": "找人聊",
+                        "answer": "用户现在通常找朋友、导师或同事讨论，靠外部反馈帮助自己梳理。",
+                        "reason": "说明产品需要替代一部分高质量对话，而不只是写文档。",
+                    },
+                ],
+                "recommended_answer": "用户现在主要靠微信群聊天、飞书文档和人工整理来沉淀想法。",
+                "placeholder": "选择“其他答案”后，可以写下真实替代方案。",
+                "fallback_answer": "我还没想好",
+                "fallback_effect": "系统会先采用最常见替代方案，并标记为待访谈验证。",
+            },
+            {
+                "id": "validation_signal",
+                "type": "validation",
+                "label": "验证信号",
+                "priority": 3,
+                "question": "如果只用 7 天验证一次，你最想看到哪个信号来证明它值得继续做？",
+                "why_it_matters": "早期想法需要尽快找到可验证的推进标准。",
+                "answer_type": "choice",
+                "options": [
+                    {
+                        "id": "weekly_use",
+                        "label": "每周复用",
+                        "answer": "至少 3 个团队愿意连续两周用它整理新想法。",
+                        "reason": "复用能证明它不是一次性新鲜感，而是进入了讨论流程。",
+                    },
+                    {
+                        "id": "pay_once",
+                        "label": "为分析付费",
+                        "answer": "至少 3 个团队愿意为一次高质量分析或工作坊付费。",
+                        "reason": "付费信号能更直接验证问题强度和价值感。",
+                    },
+                ],
+                "recommended_answer": "至少 3 个团队愿意连续两周用它整理新想法。",
+                "placeholder": "选择“其他答案”后，可以写你自己的验证标准。",
+                "fallback_answer": "我还没想好",
+                "fallback_effect": "系统会先采用每周复用作为推荐验证信号。",
+            },
+        ],
+        "section_scores": {
+            "competitors": {
+                "score": 62,
+                "dimensions": [
+                    {"label": "替代强度", "score": 70, "reason": "已有低成本替代行为存在"},
+                    {"label": "差异空间", "score": 58, "reason": "需要证明 AI 主持比文档更有效"},
+                    {"label": "调研清晰度", "score": 58, "reason": "还需要访谈真实替代路径"},
+                ],
+            },
+            "user_segments": {
+                "score": 68,
+                "dimensions": [
+                    {"label": "购买力", "score": 64, "reason": "早期团队预算有限但有明确效率诉求"},
+                    {"label": "时间精力", "score": 78, "reason": "讨论和整理成本真实存在"},
+                    {"label": "人群基数", "score": 62, "reason": "种子人群明确，但规模要继续验证"},
+                ],
+            },
+            "hook_analysis": {
+                "score": 72,
+                "dimensions": [
+                    {"label": "触发频率", "score": 70, "reason": "团队会反复产生和讨论想法"},
+                    {"label": "情绪强度", "score": 68, "reason": "混乱和无法收敛会带来明显挫败感"},
+                    {"label": "低成本验证", "score": 78, "reason": "可以用少量团队快速验证"},
+                ],
+            },
+            "risks": {
+                "score": 61,
+                "dimensions": [
+                    {"label": "风险识别度", "score": 70, "reason": "已识别 AI 幻觉和流程弱的问题"},
+                    {"label": "验证动作清晰度", "score": 58, "reason": "还需要定义具体指标"},
+                    {"label": "失败成本", "score": 55, "reason": "若无法进入讨论流程，留存风险较高"},
+                ],
+            },
+        },
+        "synthesis_changes": [],
         "canvas": {
             "customer_segments": ["远程创业小团队", "孵化器项目组", "独立开发者搭子"],
             "value_propositions": ["把零散想法快速变成可讨论的结构化方案", "降低早期创业团队的信息整理成本"],
@@ -422,12 +636,164 @@ def extract_response_text(payload):
     return "\n".join(texts)
 
 
+def normalize_list(value):
+    if isinstance(value, str):
+        return [value] if value.strip() else []
+    if isinstance(value, list):
+        return [item for item in value if item]
+    return []
+
+
+def normalize_hook_analysis(value):
+    if isinstance(value, str):
+        return {"summary": value, "hooks": []}
+    if not isinstance(value, dict):
+        return {"summary": "", "hooks": []}
+    hooks = value.get("hooks", [])
+    if isinstance(hooks, str):
+        hooks = [hooks]
+    if not isinstance(hooks, list):
+        hooks = []
+    return {
+        "summary": str(value.get("summary") or "").strip(),
+        "hooks": [item for item in hooks if item],
+    }
+
+
+def normalize_question_options(value):
+    options = []
+    raw_options = value if isinstance(value, list) else []
+    for index, item in enumerate(raw_options[:4]):
+        if isinstance(item, str):
+            item = {"label": item, "answer": item}
+        if not isinstance(item, dict):
+            continue
+        label = str(item.get("label") or item.get("title") or item.get("answer") or "").strip()
+        answer = str(item.get("answer") or item.get("value") or label).strip()
+        if not label or not answer:
+            continue
+        option_id = str(item.get("id") or f"option_{index + 1}").strip()
+        option_id = "".join(
+            char if char.isalnum() or char in "_-" else "_"
+            for char in option_id.lower()
+        ).strip("_") or f"option_{index + 1}"
+        options.append(
+            {
+                "id": option_id,
+                "label": label,
+                "answer": answer,
+                "reason": str(item.get("reason") or item.get("why") or "").strip(),
+            }
+        )
+    return options
+
+
+def normalize_clarifying_questions(value):
+    questions = []
+    raw_questions = value if isinstance(value, list) else []
+    for index, item in enumerate(raw_questions[:2]):
+        if isinstance(item, str):
+            item = {"question": item}
+        if not isinstance(item, dict):
+            continue
+        question = str(item.get("question") or "").strip()
+        if not question:
+            continue
+        question_id = str(item.get("id") or item.get("type") or f"question_{index + 1}").strip()
+        question_id = "".join(
+            char if char.isalnum() or char in "_-" else "_"
+            for char in question_id.lower()
+        ).strip("_") or f"question_{index + 1}"
+        options = normalize_question_options(item.get("options"))
+        fallback_answer = "我还没想好"
+        recommended_answer = str(item.get("recommended_answer") or "").strip()
+        if not recommended_answer and options:
+            recommended_answer = options[0]["answer"]
+        questions.append(
+            {
+                "id": question_id,
+                "type": str(item.get("type") or question_id).strip() or question_id,
+                "label": str(item.get("label") or item.get("type") or f"问题 {index + 1}").strip(),
+                "priority": item.get("priority") if isinstance(item.get("priority"), int) else index + 1,
+                "question": question,
+                "why_it_matters": str(item.get("why_it_matters") or item.get("reason") or "").strip(),
+                "answer_type": "choice",
+                "options": options,
+                "recommended_answer": recommended_answer,
+                "placeholder": str(item.get("placeholder") or "选择“其他答案”后，可以写你自己的判断。").strip(),
+                "fallback_answer": fallback_answer,
+                "fallback_effect": str(
+                    item.get("fallback_effect") or "系统会先采用推荐答案，并在分析中标记为待验证。"
+                ).strip(),
+            }
+        )
+    questions.sort(key=lambda item: item["priority"])
+    return questions
+
+
+def clamp_score(value):
+    try:
+        if isinstance(value, str):
+            digits = "".join(char for char in value if char.isdigit())
+            value = digits or 0
+        return max(0, min(100, int(value or 0)))
+    except (TypeError, ValueError):
+        return 0
+
+
+def normalize_section_scores(value):
+    if not isinstance(value, dict):
+        return {}
+    normalized = {}
+    for key, raw in value.items():
+        if not isinstance(raw, dict):
+            continue
+        dimensions = []
+        raw_dimensions = raw.get("dimensions", [])
+        if isinstance(raw_dimensions, list):
+            for item in raw_dimensions[:5]:
+                if not isinstance(item, dict):
+                    continue
+                dimensions.append(
+                    {
+                        "label": str(item.get("label") or item.get("name") or "评分维度").strip(),
+                        "score": clamp_score(item.get("score")),
+                        "reason": str(item.get("reason") or "").strip(),
+                    }
+                )
+        normalized[str(key)] = {
+            "score": clamp_score(raw.get("score")),
+            "dimensions": dimensions,
+        }
+    return normalized
+
+
 def normalize_analysis(data):
     empty = build_empty_analysis()
     if not isinstance(data, dict):
         return empty
     for key, value in empty.items():
         data.setdefault(key, value)
+    for key in [
+        "user_segments",
+        "business_flow",
+        "operation_model",
+        "hook_analysis",
+        "product_capabilities",
+        "tech_stack",
+        "risks",
+        "assumptions",
+        "missing_info",
+        "synthesis_changes",
+    ]:
+        if key == "hook_analysis":
+            data[key] = normalize_hook_analysis(data.get(key))
+        else:
+            data[key] = normalize_list(data.get(key))
+    data["clarifying_questions"] = normalize_clarifying_questions(
+        data.get("clarifying_questions")
+    )
+    data["section_scores"] = normalize_section_scores(data.get("section_scores"))
     canvas = data.get("canvas")
     if not isinstance(canvas, dict):
         canvas = {}
@@ -442,42 +808,101 @@ def normalize_analysis(data):
     return data
 
 
-def call_openai_analysis(idea, material):
-    api_key = os.getenv("OPENAI_API_KEY", "").strip()
-    if not api_key:
-        return None, "未配置 OPENAI_API_KEY。"
-    model = os.getenv("OPENAI_MODEL", "gpt-4.1-mini").strip()
-    api_url = os.getenv("OPENAI_API_URL", os.getenv("API_URL", "https://api.openai.com/v1")).strip()
-    api_url = api_url.rstrip("/")
+def build_analysis_prompt():
     schema_hint = {
         "content_extract": {"summary": "string", "key_points": ["string"]},
         "competitors": [{"name": "string", "reason": "string"}],
         "user_segments": ["string"],
         "business_flow": ["string"],
         "operation_model": ["string"],
+        "hook_analysis": {"summary": "string", "hooks": ["string"]},
         "capital_story": "string",
         "product_capabilities": ["string"],
         "tech_stack": ["string"],
         "risks": ["string"],
+        "assumptions": ["string"],
+        "missing_info": ["string"],
+        "clarifying_questions": [
+            {
+                "id": "string",
+                "type": "string",
+                "label": "string",
+                "priority": 1,
+                "question": "string",
+                "why_it_matters": "string",
+                "answer_type": "choice",
+                "options": [
+                    {
+                        "id": "string",
+                        "label": "string",
+                        "answer": "string",
+                        "reason": "string",
+                    }
+                ],
+                "recommended_answer": "string",
+                "placeholder": "string",
+                "fallback_answer": "我还没想好",
+                "fallback_effect": "string",
+            }
+        ],
+        "section_scores": {
+            "section_key": {
+                "score": 0,
+                "dimensions": [
+                    {"label": "string", "score": 0, "reason": "string"}
+                ],
+            }
+        },
+        "synthesis_changes": ["string"],
         "canvas": {key: ["string"] for key in CANVAS_KEYS},
     }
     skill = load_analysis_skill()
-    prompt = "\n\n".join(
+    return "\n\n".join(
         [
             skill,
             "输出要求：只输出严格合法的 JSON，不要输出 Markdown，不要解释，不要使用代码块。",
+            "如果材料中包含澄清回答，必须优先使用这些回答修正分析。",
+            "如果澄清回答标注为系统暂定推荐答案，必须把它当作当前版本的假设性输入，同时在 assumptions 或 risks 中保留待验证提醒。",
+            "clarifying_questions 按需输出，可以为空；只有补充回答会明显改变分析判断时才输出 1-2 个最关键问题。",
+            "如果输出 clarifying_questions，每个问题必须是选择题，必须包含 2-3 个 options、recommended_answer、fallback_answer。",
+            "fallback_answer 固定使用“我还没想好”。用户选择该项时，系统会采用 recommended_answer 作为暂定回答，所以 recommended_answer 必须具体、可用于后续分析。",
+            "每个分析章节除 content_extract 外，都必须在 section_scores 中给出评分。评分要使用与该章节强相关的维度，不要用通用维度。",
+            "为了提升交互速度，所有列表默认 2-3 项；clarifying_questions 默认 0-1 个，除非第 2 个确实关键；每个问题默认 2 个 options；section_scores 每章默认 2-3 个维度。",
             "JSON 结构必须匹配以下字段，字段名不可更改：",
             json.dumps(schema_hint, ensure_ascii=False),
         ]
     )
+
+
+def openai_request_config():
+    api_key = os.getenv("OPENAI_API_KEY", "").strip()
+    if not api_key:
+        return None, None, None, "未配置 OPENAI_API_KEY。"
+    model = os.getenv("OPENAI_MODEL", "gpt-4.1-mini").strip()
+    api_url = os.getenv("OPENAI_API_URL", os.getenv("API_URL", "https://api.openai.com/v1")).strip()
+    api_url = api_url.rstrip("/")
+    return api_key, model, api_url, ""
+
+
+def build_chat_body(model, material, stream=False):
     body = {
         "model": model,
         "messages": [
-            {"role": "system", "content": prompt},
+            {"role": "system", "content": build_analysis_prompt()},
             {"role": "user", "content": material[:18000]},
         ],
         "temperature": 0.2,
     }
+    if stream:
+        body["stream"] = True
+    return body
+
+
+def call_openai_analysis(idea, material):
+    api_key, model, api_url, config_error = openai_request_config()
+    if config_error:
+        return None, config_error
+    body = build_chat_body(model, material, stream=False)
     request = urllib.request.Request(
         f"{api_url}/chat/completions",
         data=json.dumps(body).encode("utf-8"),
@@ -508,17 +933,71 @@ def call_openai_analysis(idea, material):
         return None, f"{type(error).__name__}: {error}"
 
 
-def analyze_and_store(conn, idea_id, source_reason="auto"):
-    idea = conn.execute("SELECT * FROM ideas WHERE id = ?", (idea_id,)).fetchone()
-    if not idea:
-        return None
-    material = idea_material(conn, idea)
-    analysis, fallback_reason = call_openai_analysis(idea, material)
-    source = analysis.pop("_source", "openai") if analysis else "local"
-    if not analysis:
-        analysis = build_mock_analysis(idea, material, source=f"local:{source_reason}")
-        analysis["_fallback_reason"] = fallback_reason or "真实 AI 分析未返回结果。"
-        source = "local"
+def extract_stream_delta(payload):
+    choices = payload.get("choices", []) if isinstance(payload, dict) else []
+    if choices:
+        delta = choices[0].get("delta", {})
+        content = delta.get("content", "")
+        if isinstance(content, str):
+            return content
+        if isinstance(content, list):
+            texts = []
+            for item in content:
+                if isinstance(item, dict) and item.get("text"):
+                    texts.append(item["text"])
+            return "".join(texts)
+    return ""
+
+
+def call_openai_analysis_stream(idea, material, on_delta=None):
+    api_key, model, api_url, config_error = openai_request_config()
+    if config_error:
+        return None, config_error
+    body = build_chat_body(model, material, stream=True)
+    request = urllib.request.Request(
+        f"{api_url}/chat/completions",
+        data=json.dumps(body).encode("utf-8"),
+        headers={
+            "Authorization": f"Bearer {api_key}",
+            "Content-Type": "application/json",
+        },
+        method="POST",
+    )
+    chunks = []
+    try:
+        with urllib.request.urlopen(request, timeout=90) as response:
+            for raw_line in response:
+                line = raw_line.decode("utf-8", errors="replace").strip()
+                if not line or line.startswith(":") or not line.startswith("data:"):
+                    continue
+                data = line[5:].strip()
+                if data == "[DONE]":
+                    break
+                payload = json.loads(data)
+                delta = extract_stream_delta(payload)
+                if delta:
+                    chunks.append(delta)
+                    if on_delta:
+                        on_delta(delta)
+        text = strip_json_fence("".join(chunks))
+        parsed = json.loads(text)
+        parsed["_source"] = f"llm:{model}"
+        return normalize_analysis(parsed), ""
+    except urllib.error.HTTPError as error:
+        message = f"OpenAI 返回 HTTP {error.code}。"
+        try:
+            payload = json.loads(error.read().decode("utf-8", errors="replace"))
+            detail = payload.get("error", {})
+            if detail.get("message"):
+                message = detail["message"]
+        except Exception:
+            pass
+        return None, message
+    except (urllib.error.URLError, TimeoutError, json.JSONDecodeError, KeyError, ValueError) as error:
+        return None, f"{type(error).__name__}: {error}"
+
+
+def store_analysis(conn, idea_id, analysis, source):
     latest = conn.execute(
         "SELECT COALESCE(MAX(version), 0) AS version FROM analyses WHERE idea_id = ?",
         (idea_id,),
@@ -532,6 +1011,51 @@ def analyze_and_store(conn, idea_id, source_reason="auto"):
         (idea_id, version, source, json.dumps(normalize_analysis(analysis), ensure_ascii=False), now_iso()),
     )
     return get_latest_analysis(conn, idea_id)
+
+
+def analyze_and_store(conn, idea_id, source_reason="auto"):
+    idea = conn.execute("SELECT * FROM ideas WHERE id = ?", (idea_id,)).fetchone()
+    if not idea:
+        return None
+    material = idea_material(conn, idea)
+    analysis, fallback_reason = call_openai_analysis(idea, material)
+    source = analysis.pop("_source", "openai") if analysis else "local"
+    if not analysis:
+        analysis = build_mock_analysis(idea, material, source=f"local:{source_reason}")
+        analysis["_fallback_reason"] = fallback_reason or "真实 AI 分析未返回结果。"
+        source = "local"
+    return store_analysis(conn, idea_id, analysis, source)
+
+
+def analysis_stream_sections(content):
+    scores = content.get("section_scores", {}) if isinstance(content.get("section_scores"), dict) else {}
+    sections = [
+        {
+            "key": "content_extract",
+            "title": "内容提取",
+            "summary": content.get("content_extract", {}).get("summary", ""),
+            "items": content.get("content_extract", {}).get("key_points", []),
+        },
+        {"key": "competitors", "title": "竞品线索", "items": content.get("competitors", [])},
+        {"key": "user_segments", "title": "核心用户群体", "items": content.get("user_segments", [])},
+        {"key": "business_flow", "title": "业务流程", "items": content.get("business_flow", [])},
+        {"key": "operation_model", "title": "建议运营模式", "items": content.get("operation_model", [])},
+        {
+            "key": "hook_analysis",
+            "title": "抓手分析",
+            "summary": content.get("hook_analysis", {}).get("summary", ""),
+            "items": content.get("hook_analysis", {}).get("hooks", []),
+        },
+        {"key": "capital_story", "title": "资本视角的业务故事", "summary": content.get("capital_story", "")},
+        {"key": "product_capabilities", "title": "产品核心能力", "items": content.get("product_capabilities", [])},
+        {"key": "tech_stack", "title": "技术选型", "items": content.get("tech_stack", [])},
+        {"key": "risks", "title": "风险与验证建议", "items": content.get("risks", [])},
+        {"key": "assumptions", "title": "当前假设", "items": content.get("assumptions", [])},
+        {"key": "missing_info", "title": "待补充信息", "items": content.get("missing_info", [])},
+    ]
+    for section in sections:
+        section["score"] = scores.get(section["key"])
+    return sections
 
 
 class BrainstormHandler(SimpleHTTPRequestHandler):
@@ -552,6 +1076,26 @@ class BrainstormHandler(SimpleHTTPRequestHandler):
 
     def send_error_json(self, status, message):
         self.send_json({"error": message}, status)
+
+    def start_sse(self):
+        self.send_response(HTTPStatus.OK)
+        self.send_header("Content-Type", "text/event-stream; charset=utf-8")
+        self.send_header("Cache-Control", "no-cache")
+        self.send_header("Connection", "keep-alive")
+        self.send_header("X-Accel-Buffering", "no")
+        self.end_headers()
+
+    def send_sse(self, event, payload):
+        raw = "\n".join(
+            [
+                f"event: {event}",
+                f"data: {json.dumps(payload, ensure_ascii=False)}",
+                "",
+                "",
+            ]
+        ).encode("utf-8")
+        self.wfile.write(raw)
+        self.wfile.flush()
 
     def read_json(self):
         length = int(self.headers.get("Content-Length", "0") or "0")
@@ -733,11 +1277,14 @@ class BrainstormHandler(SimpleHTTPRequestHandler):
                 )
                 idea_id = cursor.lastrowid
                 conn.commit()
-                analyze_and_store(conn, idea_id, "created")
                 idea = conn.execute("SELECT * FROM ideas WHERE id = ?", (idea_id,)).fetchone()
                 return self.send_json({"idea": public_idea(conn, idea, user["id"], True)}, HTTPStatus.CREATED)
             if len(parts) == 3 and parts[0] == "ideas" and parts[2] == "attachments":
                 return self.upload_attachment(conn, user, parts[1])
+            if len(parts) == 3 and parts[0] == "ideas" and parts[2] == "analysis-stream":
+                return self.stream_analysis(conn, user, parts[1])
+            if len(parts) == 3 and parts[0] == "ideas" and parts[2] == "clarifications":
+                return self.save_clarification_answer(conn, user, parts[1])
             if len(parts) == 3 and parts[0] == "ideas" and parts[2] == "reanalyze":
                 idea = conn.execute("SELECT * FROM ideas WHERE id = ?", (parts[1],)).fetchone()
                 if not idea:
@@ -777,7 +1324,6 @@ class BrainstormHandler(SimpleHTTPRequestHandler):
                     (title, body, now_iso(), idea["id"]),
                 )
                 conn.commit()
-                analyze_and_store(conn, idea["id"], "edited")
                 updated = conn.execute("SELECT * FROM ideas WHERE id = ?", (idea["id"],)).fetchone()
                 return self.send_json({"idea": public_idea(conn, updated, user["id"], True)})
         return self.send_error_json(HTTPStatus.NOT_FOUND, "未找到接口。")
@@ -808,10 +1354,118 @@ class BrainstormHandler(SimpleHTTPRequestHandler):
                     (now_iso(), idea["id"]),
                 )
                 conn.commit()
-                analyze_and_store(conn, idea["id"], "attachment_removed")
                 updated = conn.execute("SELECT * FROM ideas WHERE id = ?", (idea["id"],)).fetchone()
                 return self.send_json({"idea": public_idea(conn, updated, user["id"], True)})
         return self.send_error_json(HTTPStatus.NOT_FOUND, "未找到接口。")
+
+    def stream_analysis(self, conn, user, idea_id):
+        idea = conn.execute("SELECT * FROM ideas WHERE id = ?", (idea_id,)).fetchone()
+        if not idea:
+            return self.send_error_json(HTTPStatus.NOT_FOUND, "想法不存在。")
+        if idea["author_id"] != user["id"]:
+            return self.send_error_json(HTTPStatus.FORBIDDEN, "只有作者可以更新分析。")
+
+        material = idea_material(conn, idea)
+        self.start_sse()
+
+        def emit(event, payload):
+            self.send_sse(event, payload)
+
+        try:
+            started = time.monotonic()
+            emit("status", {"message": "正在阅读想法和上下文"})
+            sys.stderr.write(
+                f"[analysis-stream] idea={idea['id']} started elapsed={time.monotonic() - started:.2f}s\n"
+            )
+
+            model_started = {"seen": False}
+
+            def on_model_delta(_delta):
+                if model_started["seen"]:
+                    return
+                model_started["seen"] = True
+                emit("status", {"message": "模型正在组织结构化分析"})
+
+            analysis, fallback_reason = call_openai_analysis_stream(idea, material, on_model_delta)
+            sys.stderr.write(
+                f"[analysis-stream] idea={idea['id']} model_done elapsed={time.monotonic() - started:.2f}s fallback={bool(fallback_reason)}\n"
+            )
+            source = analysis.pop("_source", "openai") if analysis else "local"
+            if not analysis:
+                emit("status", {"message": "真实 AI 分析未返回，正在使用本地兜底分析"})
+                analysis = build_mock_analysis(idea, material, source="local:stream")
+                analysis["_fallback_reason"] = fallback_reason or "真实 AI 分析未返回结果。"
+                source = "local"
+
+            analysis = normalize_analysis(analysis)
+            emit("status", {"message": "正在把分析写到右侧"})
+            for section in analysis_stream_sections(analysis):
+                emit("section", section)
+                time.sleep(0.02)
+            emit(
+                "questions",
+                {
+                    "questions": analysis.get("clarifying_questions", []),
+                    "message": "补充问题已在后台准备",
+                },
+            )
+
+            latest = store_analysis(conn, idea["id"], analysis, source)
+            conn.commit()
+            updated = conn.execute("SELECT * FROM ideas WHERE id = ?", (idea["id"],)).fetchone()
+            emit("done", {"analysis": latest, "idea": public_idea(conn, updated, user["id"], True)})
+            sys.stderr.write(
+                f"[analysis-stream] idea={idea['id']} done elapsed={time.monotonic() - started:.2f}s source={source}\n"
+            )
+        except BrokenPipeError:
+            return
+        except Exception as error:
+            try:
+                emit("error", {"error": f"{type(error).__name__}: {error}"})
+            except Exception:
+                pass
+
+    def save_clarification_answer(self, conn, user, idea_id):
+        idea = conn.execute("SELECT * FROM ideas WHERE id = ?", (idea_id,)).fetchone()
+        if not idea:
+            return self.send_error_json(HTTPStatus.NOT_FOUND, "想法不存在。")
+        if idea["author_id"] != user["id"]:
+            return self.send_error_json(HTTPStatus.FORBIDDEN, "只有作者可以回应澄清问题。")
+        try:
+            payload = self.read_json()
+        except json.JSONDecodeError:
+            return self.send_error_json(HTTPStatus.BAD_REQUEST, "内容格式不正确。")
+        question = payload.get("question") if isinstance(payload.get("question"), dict) else {}
+        question_id = str(question.get("id") or payload.get("question_id") or "").strip()
+        question_id = "".join(
+            char if char.isalnum() or char in "_-" else "_"
+            for char in question_id.lower()
+        ).strip("_")
+        question_text = str(question.get("question") or payload.get("question_text") or "").strip()
+        answer = str(payload.get("answer") or "").strip()
+        is_fallback = 1 if payload.get("is_fallback") else 0
+        if not question_id or not question_text or not answer:
+            return self.send_error_json(HTTPStatus.BAD_REQUEST, "问题和回答都需要填写。")
+        label = str(question.get("label") or payload.get("question_label") or "").strip()
+        now = now_iso()
+        conn.execute(
+            """
+            INSERT INTO clarification_answers (
+                idea_id, question_id, question_label, question_text, answer, is_fallback, created_at, updated_at
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(idea_id, question_id) DO UPDATE SET
+                question_label = excluded.question_label,
+                question_text = excluded.question_text,
+                answer = excluded.answer,
+                is_fallback = excluded.is_fallback,
+                updated_at = excluded.updated_at
+            """,
+            (idea["id"], question_id, label, question_text, answer, is_fallback, now, now),
+        )
+        conn.commit()
+        updated = conn.execute("SELECT * FROM ideas WHERE id = ?", (idea["id"],)).fetchone()
+        return self.send_json({"idea": public_idea(conn, updated, user["id"], True)})
 
     def register(self):
         try:
@@ -936,7 +1590,6 @@ class BrainstormHandler(SimpleHTTPRequestHandler):
             (now_iso(), idea["id"]),
         )
         conn.commit()
-        analyze_and_store(conn, idea["id"], "attachment_added")
         updated = conn.execute("SELECT * FROM ideas WHERE id = ?", (idea["id"],)).fetchone()
         return self.send_json({"idea": public_idea(conn, updated, user["id"], True)})
 

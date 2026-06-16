@@ -104,16 +104,22 @@
                   <strong>添加图片或文档</strong>
                   <small id="newFileCount">可多选</small>
                 </label>
-                <button id="submitIdeaButton" class="primary-button full" type="submit">提交并进入分析</button>
+                <button id="submitIdeaButton" class="primary-button full" type="submit">提交并分析</button>
               </form>
             </aside>
 
             <section class="next-step-panel">
-              <p class="eyebrow">Step 2</p>
-              <h2>分析结果会在下一步展开</h2>
-              <p>提交后会自动切到“分析结果”。这里会展示内容提取、竞品线索、用户群体、业务流程、运营模式、资本故事、产品能力、技术选型和商业画布。</p>
+              <div class="panel-heading">
+                <div>
+                  <p class="eyebrow">Live analysis</p>
+                  <h2>实时分析</h2>
+                </div>
+                <button id="goAnalysisButton" class="ghost-button" type="button">完整视图</button>
+              </div>
               <div id="selectedMini" class="selected-mini"></div>
-              <button id="goAnalysisButton" class="primary-button" type="button">查看当前分析</button>
+              <div id="inlineAnalysisView" class="inline-analysis-view"></div>
+              <div id="inlineQuestions" class="clarification-panel"></div>
+              <button id="updateAnalysisButton" class="primary-button" type="button" hidden>基于回答更新分析</button>
             </section>
           </section>
 
@@ -151,6 +157,7 @@
 
                 <section id="analysisView" class="analysis-view"></section>
                 <section id="canvasView" class="canvas-view" hidden></section>
+                <section id="clarificationPanel" class="clarification-panel"></section>
 
                 <section class="source-panel">
                   <div class="source-heading">
