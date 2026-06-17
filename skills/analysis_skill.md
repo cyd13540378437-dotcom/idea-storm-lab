@@ -116,7 +116,7 @@
 ## 输出质量标准
 
 - 结论要能帮助团队决定下一步做什么。
-- 如果想法太模糊，要指出缺失信息；只有当问题会明显提升判断质量时，才在 clarifying_questions 中给出可选补充问题。
+- 如果想法太模糊，要指出缺失信息；只有当问题会明显提升判断质量时，才在 clarifying_questions 中给出可选补充问题。若存在多个互不相同的关键缺口，应一次性给出最多 3 个问题，而不是让用户逐个等待。
 - 尽量给出具体场景、角色、动作和验证方式。
 - 不要用大段套话填充 JSON 字段。
 - 每个列表建议 2-5 项，避免过长。
@@ -173,4 +173,4 @@ options 每一项必须包含：
 - answer
 - reason
 
-section_scores 的 key 必须尽量对应分析字段名，例如 competitors、user_segments、business_flow、operation_model、hook_analysis、capital_story、product_capabilities、tech_stack、risks、assumptions、missing_info。
+section_scores 的 key 必须尽量对应分析字段名，例如 competitors、user_segments、business_flow、operation_model、hook_analysis、capital_story、product_capabilities、tech_stack、risks、assumptions。missing_info 是信息缺口列表，不需要评分。

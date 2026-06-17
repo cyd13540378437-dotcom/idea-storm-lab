@@ -692,7 +692,7 @@ def normalize_question_options(value):
 def normalize_clarifying_questions(value):
     questions = []
     raw_questions = value if isinstance(value, list) else []
-    for index, item in enumerate(raw_questions[:2]):
+    for index, item in enumerate(raw_questions[:3]):
         if isinstance(item, str):
             item = {"question": item}
         if not isinstance(item, dict):
@@ -864,11 +864,11 @@ def build_analysis_prompt():
             "输出要求：只输出严格合法的 JSON，不要输出 Markdown，不要解释，不要使用代码块。",
             "如果材料中包含澄清回答，必须优先使用这些回答修正分析。",
             "如果澄清回答标注为系统暂定推荐答案，必须把它当作当前版本的假设性输入，同时在 assumptions 或 risks 中保留待验证提醒。",
-            "clarifying_questions 按需输出，可以为空；只有补充回答会明显改变分析判断时才输出 1-2 个最关键问题。",
+            "clarifying_questions 按需输出，可以为空；只有补充回答会明显改变分析判断时才输出。若 missing_info 中有多条互不相同的关键缺口，优先一次性输出对应的 2-3 个问题。",
             "如果输出 clarifying_questions，每个问题必须是选择题，必须包含 2-3 个 options、recommended_answer、fallback_answer。",
             "fallback_answer 固定使用“我还没想好”。用户选择该项时，系统会采用 recommended_answer 作为暂定回答，所以 recommended_answer 必须具体、可用于后续分析。",
-            "每个分析章节除 content_extract 外，都必须在 section_scores 中给出评分。评分要使用与该章节强相关的维度，不要用通用维度。",
-            "为了提升交互速度，所有列表默认 2-3 项；clarifying_questions 默认 0-1 个，除非第 2 个确实关键；每个问题默认 2 个 options；section_scores 每章默认 2-3 个维度。",
+            "每个分析章节除 content_extract 与 missing_info 外，都必须在 section_scores 中给出评分。missing_info 是信息缺口列表，不要为它输出评分。",
+            "为了提升交互速度，所有列表默认 2-3 项；clarifying_questions 默认 0-3 个，最多 3 个；每个问题默认 2 个 options；section_scores 每章默认 2-3 个维度。",
             "JSON 结构必须匹配以下字段，字段名不可更改：",
             json.dumps(schema_hint, ensure_ascii=False),
         ]
@@ -1055,7 +1055,7 @@ def analysis_stream_sections(content):
         {"key": "missing_info", "title": "待补充信息", "items": content.get("missing_info", [])},
     ]
     for section in sections:
-        section["score"] = scores.get(section["key"])
+        section["score"] = None if section["key"] == "missing_info" else scores.get(section["key"])
     return sections
 
 

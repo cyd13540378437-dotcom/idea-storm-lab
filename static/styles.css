@@ -369,13 +369,13 @@ label {
   gap: 16px;
 }
 
-.next-step-panel h2,
-.next-step-panel p {
+.next-step-panel > .panel-heading h2,
+.next-step-panel > .panel-heading p {
   max-width: 760px;
   margin: 0;
 }
 
-.next-step-panel p:not(.eyebrow) {
+.next-step-panel > p:not(.eyebrow) {
   color: #4f4a40;
   line-height: 1.7;
 }

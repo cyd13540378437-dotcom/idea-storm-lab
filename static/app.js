@@ -487,8 +487,31 @@ async function saveClarification(question, answer, isFallback = false) {
   showNotice(isFallback ? "已采用推荐答案，并标记为还没想好。" : "已保存回答。");
 }
 
+function clarifyingQuestionsForContent(content = {}) {
+  const questions = Array.isArray(content?.clarifying_questions)
+    ? content.clarifying_questions.filter(Boolean)
+    : [];
+  const missingInfo = Array.isArray(content?.missing_info)
+    ? content.missing_info.filter(Boolean)
+    : [];
+  const derivedQuestions = missingInfo.slice(questions.length, 3).map((item, index) => {
+    const position = questions.length + index + 1;
+    return {
+      id: `missing_info_${position}`,
+      type: "missing_info",
+      label: "待补充信息",
+      priority: position,
+      question: String(item),
+      why_it_matters: "这条信息会影响分析里的假设、风险和下一步判断。",
+      answer_type: "text",
+      placeholder: "可以直接补充你的判断、边界或当前状态。",
+    };
+  });
+  return [...questions, ...derivedQuestions];
+}
+
 function currentQuestionById(questionId) {
-  const contentQuestions = state.selectedIdea?.analysis?.content?.clarifying_questions || [];
+  const contentQuestions = clarifyingQuestionsForContent(state.selectedIdea?.analysis?.content);
   const streamQuestions = state.stream.ideaId === state.selectedIdea?.id ? state.stream.questions || [] : [];
   return [...contentQuestions, ...streamQuestions].find((item) => item.id === questionId);
 }
@@ -732,7 +755,7 @@ function renderInlineAnalysisPanel() {
   }
 
   view.innerHTML = renderAnalysisMarkup(content, idea.analysis, true) + renderKeepIdeaAction(idea);
-  questions.innerHTML = renderQuestionCards(idea, content.clarifying_questions || []);
+  questions.innerHTML = renderQuestionCards(idea, clarifyingQuestionsForContent(content));
   updateButton.hidden = !idea.can_edit || !(idea.clarification_answers || []).length;
 }
 
@@ -901,7 +924,7 @@ function renderAnalysis(content, meta) {
     return;
   }
   view.innerHTML = renderAnalysisMarkup(content, meta);
-  $("clarificationPanel").innerHTML = renderQuestionCards(state.selectedIdea, content.clarifying_questions || [], true);
+  $("clarificationPanel").innerHTML = renderQuestionCards(state.selectedIdea, clarifyingQuestionsForContent(content), true);
 }
 
 function renderAnalysisUpdatingNotice() {
@@ -1020,6 +1043,7 @@ function renderQuestionCards(idea, questions = [], includeUpdate = false) {
         .map((question) => {
           const answer = answers[question.id];
           const options = Array.isArray(question.options) ? question.options : [];
+          const isTextQuestion = question.answer_type === "text" || !options.length;
           const answerText = answer?.answer || "";
           const selectedOptionId = options.find((option) => option.answer === answerText)?.id || "";
           const selectedFallback = answer && answer.is_fallback;
@@ -1032,36 +1056,47 @@ function renderQuestionCards(idea, questions = [], includeUpdate = false) {
               </div>
               <h4>${escapeHtml(question.question)}</h4>
               ${question.why_it_matters ? `<p>${escapeHtml(question.why_it_matters)}</p>` : ""}
-              <div class="choice-list">
-                ${options
-                  .map(
-                    (option) => `
-                      <button class="choice-option ${selectedOptionId === option.id ? "selected" : ""}" type="button" data-clarification-action="option" data-question-id="${escapeHtml(question.id)}" data-option-id="${escapeHtml(option.id)}" aria-pressed="${selectedOptionId === option.id ? "true" : "false"}">
-                        <strong>${escapeHtml(option.label)}</strong>
-                        <span>${escapeHtml(option.answer)}</span>
-                        ${option.reason ? `<small>${escapeHtml(option.reason)}</small>` : ""}
+              ${
+                isTextQuestion
+                  ? `
+                    <div class="other-answer text-answer">
+                      <textarea data-question-answer="${escapeHtml(question.id)}" rows="3" placeholder="${escapeHtml(question.placeholder || "写下你的补充答案。")}">${answer ? escapeHtml(answerText) : ""}</textarea>
+                      <button class="ghost-button" type="button" data-clarification-action="save-other" data-question-id="${escapeHtml(question.id)}">${answer ? "更新回答" : "保存回答"}</button>
+                    </div>
+                  `
+                  : `
+                    <div class="choice-list">
+                      ${options
+                        .map(
+                          (option) => `
+                            <button class="choice-option ${selectedOptionId === option.id ? "selected" : ""}" type="button" data-clarification-action="option" data-question-id="${escapeHtml(question.id)}" data-option-id="${escapeHtml(option.id)}" aria-pressed="${selectedOptionId === option.id ? "true" : "false"}">
+                              <strong>${escapeHtml(option.label)}</strong>
+                              <span>${escapeHtml(option.answer)}</span>
+                              ${option.reason ? `<small>${escapeHtml(option.reason)}</small>` : ""}
+                            </button>
+                          `
+                        )
+                        .join("")}
+                      <button class="choice-option fallback-option ${selectedFallback ? "selected" : ""}" type="button" data-clarification-action="fallback" data-question-id="${escapeHtml(question.id)}" aria-pressed="${selectedFallback ? "true" : "false"}">
+                        <strong>${escapeHtml(question.fallback_answer || "我还没想好")}</strong>
+                        <span>${escapeHtml(question.recommended_answer || "先采用系统推荐答案。")}</span>
+                        <small>${escapeHtml(question.fallback_effect || "系统会先采用推荐答案，并标记为待验证。")}</small>
                       </button>
-                    `
-                  )
-                  .join("")}
-                <button class="choice-option fallback-option ${selectedFallback ? "selected" : ""}" type="button" data-clarification-action="fallback" data-question-id="${escapeHtml(question.id)}" aria-pressed="${selectedFallback ? "true" : "false"}">
-                  <strong>${escapeHtml(question.fallback_answer || "我还没想好")}</strong>
-                  <span>${escapeHtml(question.recommended_answer || "先采用系统推荐答案。")}</span>
-                  <small>${escapeHtml(question.fallback_effect || "系统会先采用推荐答案，并标记为待验证。")}</small>
-                </button>
-                <button class="choice-option other-trigger ${selectedOther ? "selected" : ""}" type="button" data-clarification-action="other" data-question-id="${escapeHtml(question.id)}" aria-pressed="${selectedOther ? "true" : "false"}">
-                  <strong>其他答案</strong>
-                  <span>我想自己补充一个更准确的回答。</span>
-                </button>
-              </div>
-              <div class="other-answer" ${selectedOther ? "" : "hidden"}>
-                <textarea data-question-answer="${escapeHtml(question.id)}" rows="3" placeholder="${escapeHtml(question.placeholder || "写下你的其他答案。")}">${selectedOther ? escapeHtml(answerText) : ""}</textarea>
-                <button class="ghost-button" type="button" data-clarification-action="save-other" data-question-id="${escapeHtml(question.id)}">保存其他答案</button>
-              </div>
+                      <button class="choice-option other-trigger ${selectedOther ? "selected" : ""}" type="button" data-clarification-action="other" data-question-id="${escapeHtml(question.id)}" aria-pressed="${selectedOther ? "true" : "false"}">
+                        <strong>其他答案</strong>
+                        <span>我想自己补充一个更准确的回答。</span>
+                      </button>
+                    </div>
+                    <div class="other-answer" ${selectedOther ? "" : "hidden"}>
+                      <textarea data-question-answer="${escapeHtml(question.id)}" rows="3" placeholder="${escapeHtml(question.placeholder || "写下你的其他答案。")}">${selectedOther ? escapeHtml(answerText) : ""}</textarea>
+                      <button class="ghost-button" type="button" data-clarification-action="save-other" data-question-id="${escapeHtml(question.id)}">保存其他答案</button>
+                    </div>
+                  `
+              }
               ${
                 answer
                   ? `<div class="answer-chip">${answer.is_fallback ? "已采用推荐" : "已选择"}：${escapeHtml(answer.answer)}</div>`
-                  : `<small class="fallback-effect">选择一个答案后，可以基于回答更新分析。</small>`
+                  : `<small class="fallback-effect">回答任意问题后，可以基于回答更新分析。</small>`
               }
             </article>
           `;
@@ -1086,7 +1121,6 @@ function sectionKeyFromTitle(title) {
     技术选型: "tech_stack",
     风险与验证建议: "risks",
     当前假设: "assumptions",
-    待补充信息: "missing_info",
   };
   return map[title] || "";
 }
